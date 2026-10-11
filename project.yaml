@@ -1,7 +1,7 @@
 # Per-experiment settings. `make run` reads this; command-line values override it,
 # e.g. `make run BOARD=xiao`.
 board: xiao                         # profile in boards/<name>.env
-csv_header: time_ms,count          # must match the header line the firmware prints
+csv_header: time_ms,state,rms          # must match the header line the firmware prints
 port: /dev/ttyACM0                # optional; auto-detected if unset
 
 # Arduino libraries, installed automatically with `arduino-cli lib install`.
