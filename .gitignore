@@ -1,0 +1,8 @@
+/build/
+/data/*
+!/data/.gitkeep
+
+.clangd
+compile_commands.json
+.cache/
+__pycache__/
