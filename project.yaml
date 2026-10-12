@@ -5,7 +5,9 @@ csv_header: time_ms,state,rms          # must match the header line the firmware
 port: /dev/ttyACM0                # optional; auto-detected if unset
 
 # Arduino libraries, installed automatically with `arduino-cli lib install`.
-libs: []
+libs:
+  - "TSSwork-project-1_inferencing"
+  - "nRF52840 PDM - Adafruit Fork"
 #libs:
 #  - Adafruit BMP280 Library
 #  - DHT sensor library
