@@ -24,10 +24,15 @@ BAUD ?= 9600
 CSV_HEADER ?=
 LIBS ?=
 
+LABEL ?= unknown
+COUNT ?= 1
+WAV_DIR ?= edge_data
+UV ?= uv
+
 BUILD := build/$(BOARD)
 NINJA := ninja -C $(BUILD)
 
-.PHONY: help configure build upload monitor log run clangd clean
+.PHONY: help configure build upload monitor log run clangd clean wav
 
 help:
 	@echo "daq-template: build/upload/log firmware with arduino-cli (CMake + Ninja)"
@@ -85,6 +90,10 @@ run:
 	$(MAKE) upload
 	@sleep 2
 	$(MAKE) log
+
+wav:
+	@test -n "$(PORT)" || { echo "PORT is empty: set PORT=/dev/ttyACM0" >&2; exit 1; }
+	$(UV) run scripts/ei_capture.py --port "$(PORT)" --label "$(LABEL)" --count "$(COUNT)" --outdir "$(WAV_DIR)"
 
 clangd: configure
 	$(NINJA) libs
