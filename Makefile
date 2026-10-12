@@ -101,3 +101,28 @@ clangd: configure
 
 clean:
 	rm -rf build
+
+
+# Add 'build_model', 'upload_model', 'run_model' to your .PHONY list
+.PHONY: help configure build upload monitor log run clangd clean build_model upload_model run_model
+
+# ... (keep all your existing Makefile rules exactly as they are) ...
+
+# ==============================================================================
+# Edge Impulse Model Targets
+# ==============================================================================
+MODEL_ENTRY := edge_model.cpp
+
+build_model:
+	@echo "Building Edge Impulse model ($(MODEL_ENTRY))..."
+	$(MAKE) configure SKETCH_ENTRY=$(MODEL_ENTRY)
+	$(NINJA) -C $(BUILD) build
+
+upload_model: build_model
+	@echo "Uploading Edge Impulse model to $(PORT)..."
+	PORT="$(PORT)" $(NINJA) -C $(BUILD) upload
+
+run_model: upload_model
+	@echo "Starting serial logging for Edge Impulse model..."
+	@sleep 2
+	$(MAKE) log

@@ -1,49 +1,40 @@
 cmake_minimum_required(VERSION 3.16)
-project(daq NONE)
+project(PH3039 NONE)
 
 set(FQBN "arduino:avr:uno" CACHE STRING "Board FQBN")
-set(LIBS "" CACHE STRING "Arduino libraries to install (semicolon separated)")
+set(PORT "" CACHE STRING "Serial port (the Makefile auto-detects it)")
+set(BAUD 9600 CACHE STRING "Monitor baud rate")
+set(SKETCH_ENTRY "main.cpp" CACHE STRING "Main sketch file in src/")
 
 find_program(ARDUINO_CLI arduino-cli REQUIRED)
 
 set(SKETCH_DIR ${CMAKE_BINARY_DIR}/sketch)
 set(SKETCH_INO ${SKETCH_DIR}/sketch.ino)
-set(OUT_DIR    ${CMAKE_BINARY_DIR}/out)
-set(LIBS_STAMP ${CMAKE_BINARY_DIR}/libs.stamp)
-file(GLOB SRC_FILES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/*)
 
-# Install Arduino libraries once; re-runs only when project.yaml changes.
-if(LIBS)
-  set(LIB_CMD COMMAND ${ARDUINO_CLI} lib install ${LIBS})
-endif()
+# Stage only the necessary files to avoid "multiple definition of setup/loop" errors
 add_custom_command(
-  OUTPUT ${LIBS_STAMP}
-  ${LIB_CMD}
-  COMMAND ${CMAKE_COMMAND} -E touch ${LIBS_STAMP}
-  DEPENDS ${CMAKE_SOURCE_DIR}/project.yaml
-  VERBATIM
-)
-add_custom_target(libs DEPENDS ${LIBS_STAMP})
-
-# arduino-cli wants <name>/<name>.ino: stage src/ as a sketch.
-add_custom_command(
-  OUTPUT ${SKETCH_INO}
-  COMMAND ${CMAKE_SOURCE_DIR}/scripts/stage-sketch.sh ${CMAKE_BINARY_DIR}
-  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-  DEPENDS ${SRC_FILES}
-  VERBATIM
+    OUTPUT ${SKETCH_INO}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${SKETCH_DIR}
+    # Copy all header files (e.g., fmt.h)
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/src/*.h ${SKETCH_DIR}/
+    # Copy ONLY the selected entry point and rename it to sketch.ino
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/src/${SKETCH_ENTRY} ${SKETCH_INO}
+    DEPENDS ${CMAKE_SOURCE_DIR}/src/${SKETCH_ENTRY}
 )
 
 add_custom_target(build ALL
-  COMMAND ${ARDUINO_CLI} compile --fqbn ${FQBN} --build-path ${OUT_DIR} ${SKETCH_DIR}
-  DEPENDS ${SKETCH_INO} ${LIBS_STAMP}
-  USES_TERMINAL
+    COMMAND ${ARDUINO_CLI} compile --fqbn ${FQBN} --build-path ${CMAKE_BINARY_DIR}/out ${SKETCH_DIR}
+    DEPENDS ${SKETCH_INO}
+    USES_TERMINAL
 )
 
-# PORT comes from the environment (exported by the Makefile).
 add_custom_target(upload
-  COMMAND sh -c "${ARDUINO_CLI} upload --fqbn ${FQBN} --port \"$PORT\" --input-dir ${OUT_DIR} ${SKETCH_DIR}"
-  DEPENDS build
-  USES_TERMINAL
-  VERBATIM
+    COMMAND ${ARDUINO_CLI} compile --fqbn ${FQBN} --build-path ${CMAKE_BINARY_DIR}/out --upload --port ${PORT} ${SKETCH_DIR}
+    DEPENDS ${SKETCH_INO}
+    USES_TERMINAL
+)
+
+add_custom_target(monitor
+    COMMAND ${ARDUINO_CLI} monitor --port ${PORT} --config baudrate=${BAUD}
+    USES_TERMINAL
 )
