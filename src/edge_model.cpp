@@ -96,6 +96,7 @@ void loop() {
 
             // Control the EXTERNAL LED based on the prediction
             // Using strcasecmp so it works whether Edge Impulse outputs "on", "ON", "On", etc.
+            // Control the EXTERNAL LED based on the prediction
             if (max_score > 0.60) {
                 if (strcasecmp(best_label, "on") == 0) {
                     digitalWrite(EXTERNAL_LED_PIN, HIGH);
@@ -103,6 +104,9 @@ void loop() {
                 } else if (strcasecmp(best_label, "off") == 0) {
                     digitalWrite(EXTERNAL_LED_PIN, LOW);
                     logln("LED turned OFF");
+                } else {
+                    // It's 'noise' or 'silence' or 'fan' - do nothing to the LED
+                    logln("Background noise detected (ignored)");
                 }
             }
         } else {
