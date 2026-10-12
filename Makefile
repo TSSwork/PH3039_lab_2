@@ -10,6 +10,7 @@ build/config.mk: project.yaml scripts/config.py
 -include build/config.mk
 
 BOARD ?= uno
+SKETCH_ENTRY ?= main.cpp
 BOARDFILE := boards/$(BOARD).env
 
 ifeq ($(wildcard $(BOARDFILE)),)
