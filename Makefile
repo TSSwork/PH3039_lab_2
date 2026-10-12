@@ -70,7 +70,7 @@ help:
 	@echo "Add a board: create boards/<name>.env with FQBN= and BAUD=."
 
 configure:
-	cmake -S . -B $(BUILD) -G Ninja -DFQBN="$(FQBN)" -DLIBS='$(LIBS)'
+	cmake -S . -B $(BUILD) -G Ninja -DFQBN="$(FQBN)" -DLIBS='$(LIBS)' -DPORT="$(PORT)" -DSKETCH_ENTRY="$(SKETCH_ENTRY)"
 
 build: configure
 	$(NINJA) build

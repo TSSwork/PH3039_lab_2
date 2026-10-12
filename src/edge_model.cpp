@@ -7,7 +7,7 @@
 #include <TSSwork-project-1_inferencing.h>
 
 // Define the external LED pin (The pin labeled D2 on the XIAO)
-#define EXTERNAL_LED_PIN 10
+#define EXTERNAL_LED_PIN 2
 
 constexpr uint32_t SAMPLE_RATE = EI_CLASSIFIER_FREQUENCY;
 constexpr size_t SAMPLE_COUNT = EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE;
@@ -25,7 +25,7 @@ void onPDMdata() {
         while (PDM.available()) {
             int16_t dummy;
             PDM.read(&dummy, sizeof(int16_t));
-.        }
+        }
     }
 }
 
