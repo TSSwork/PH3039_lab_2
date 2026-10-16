@@ -31,6 +31,8 @@ WAV_DIR ?= edge_data
 UV ?= uv
 
 SWEEP_FS   ?= 20000
+# boards/<name>.env can override SAMPLING_ENTRY
+SAMPLING_ENTRY ?= sampling.cpp
 SWEEP_ARGS ?=
 
 BUILD := build/$(BOARD)
@@ -87,7 +89,7 @@ monitor:
 
 log:
 	@test -n "$(CSV_HEADER)" || { echo "csv_header is empty: set it in project.yaml (or CSV_HEADER=...)" >&2; exit 1; }
-	./scripts/log.sh "$(PORT)" "$(BAUD)" "$(CSV_HEADER)"
+	./scripts/log.sh "$(PORT)" "$(BAUD)" "$(CSV_HEADER)" "$(BOARD)"
 
 # Sub-makes re-detect the port, since the board can re-enumerate after flashing.
 run:
@@ -139,14 +141,14 @@ run_model: upload_model
 
 # --- Sampling & frequency sweep (Sampling/FFT lab) ----------------------
 build_sampling:
-	$(MAKE) configure SKETCH_ENTRY=sampling.cpp
+	$(MAKE) configure SKETCH_ENTRY=$(SAMPLING_ENTRY)
 	$(NINJA) build
 
 upload_sampling: build_sampling
 	PORT="$(PORT)" $(NINJA) upload
 
 sweep: upload_sampling
-	uv run scripts/sweep_log.py --port "$(PORT)" --fs $(SWEEP_FS) $(SWEEP_ARGS)
+	uv run scripts/sweep_log.py --board "$(BOARD)" --port "$(PORT)" --fs $(SWEEP_FS) $(SWEEP_ARGS)
 
 sweepplot:
 	uv run scripts/sweep_plot.py $(if $(CSV),--file $(CSV),)

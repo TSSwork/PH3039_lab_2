@@ -74,6 +74,7 @@ def open_generator():
 
 def main():
     ap = argparse.ArgumentParser(description="SCPI frequency sweep + XIAO ADC logging")
+    ap.add_argument("--board", default="", help="board name, added to the CSV filename")
     ap.add_argument("--port", required=True, help="XIAO serial port, e.g. /dev/ttyACM0")
     ap.add_argument("--baud", type=int, default=115200)
     ap.add_argument("--fs", type=int, default=20000, help="must match FS in sampling.cpp")
@@ -107,7 +108,8 @@ def main():
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d_%H%M%S")
-    csv_path = outdir / f"sweep_{stamp}.csv"
+    tag = f"{args.board}_" if args.board else ""
+    csv_path = outdir / f"sweep_{tag}{stamp}.csv"
 
     n_steps = int((args.fstop - args.fstart) // args.fstep) + 1
     try:
@@ -118,6 +120,7 @@ def main():
         g.write("OUTP ON")
 
         with open(csv_path, "w") as f:
+            f.write(f"# board={args.board or 'unknown'}\n")
             f.write(f"# generator={idn}\n")
             f.write(f"# sweep sine {args.fstart}..{args.fstop} Hz step {args.fstep}, "
                     f"vpp={args.vpp}, voff={args.voff}, phase_anchor=window_start\n")

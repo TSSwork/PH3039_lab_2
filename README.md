@@ -25,6 +25,7 @@ hears "off" it switches the LED off. It ignores silence and fan noise.
 src/main.cpp          Firmware 1: mic capture. Streams 2 s, 16 kHz PCM clips on request.
 src/edge_model.cpp    Firmware 2: runs the Edge Impulse classifier and drives the LED.
 src/sampling.cpp      Firmware 3: fixed-rate ADC capture for the Sampling/FFT lab.
+src/sampling_nano.cpp Firmware 3 for the Arduino Nano 33 BLE (mbed core, 10 kHz).
 src/fmt.h             csvln()/logln() serial helpers.
 scripts/ei_capture.py PC side of capture: asks the board for a clip and writes a .wav.
 scripts/sweep_log.py  Drives the signal generator through a frequency sweep and logs ADC samples.
@@ -229,6 +230,25 @@ make sweepplot CSV=data/sweep_<stamp>.csv   # pick a file (default: newest)
 `SWEEP_FS` (default 20000) and `--fs` must match `FS` in `sampling.cpp`. Other
 options of `sweep_log.py`: `--fstart`, `--fstop`, `--fstep`, `--periods`,
 `--settle`, `--vpp`, `--voff`, `--maxn`, `--outdir`.
+
+### Using another board (Arduino Nano 33 BLE)
+
+Each board has a profile in `boards/<name>.env` (FQBN, baud, and optionally
+`SAMPLING_ENTRY` and `SWEEP_FS`). `boards/nano33ble.env` selects
+`src/sampling_nano.cpp` and a 10 kHz sample rate.
+
+```sh
+arduino-cli core install arduino:mbed_nano     # once
+make sweep BOARD=nano33ble PORT=/dev/ttyACM0   # or set board: in project.yaml
+```
+
+Wire the generator to **A0** (P0.04, SAADC AIN2) and GND. To add another
+board, create `boards/<name>.env`, and if the XIAO firmware does not work on it,
+write a `src/sampling_<name>.cpp` and point `SAMPLING_ENTRY` at it.
+
+The board name is part of every output filename: `data/sweep_<board>_<stamp>.csv`
+(with a `# board=` header line) and `data/log_<board>_<stamp>.csv/.log`.
+`make sweepplot` picks the newest CSV by modification time.
 
 ### Notes
 

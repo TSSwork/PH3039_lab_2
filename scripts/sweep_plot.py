@@ -112,7 +112,7 @@ def main():
 
     path = args.file
     if path is None:
-        cands = sorted(glob.glob("data/sweep_*.csv"))
+        cands = sorted(glob.glob("data/sweep_*.csv"), key=os.path.getmtime)
         if not cands:
             sys.exit("No data/sweep_*.csv yet. Run 'make sweep' first.")
         path = cands[-1]

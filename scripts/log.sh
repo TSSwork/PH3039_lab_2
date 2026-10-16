@@ -4,9 +4,10 @@ set -e
 port="$1"
 baud="$2"
 header="${3:-}"
+board="${4:-}"
 
 mkdir -p data
-base=data/log_$(date +%Y%m%d_%H%M%S)
+base=data/log_${board:+${board}_}$(date +%Y%m%d_%H%M%S)
 
 PY=${PYTHON:-$(command -v python3 || command -v python || command -v py)}
 # MONITOR_CMD lets tests substitute a fake serial source.
