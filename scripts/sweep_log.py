@@ -26,7 +26,7 @@ from pathlib import Path
 import pyvisa
 import serial
 
-ROW_RE = re.compile(r"^(\d+),(\d+(?:\.\d+)?),(\d+)$")
+ROW_RE = re.compile(r"^(\d+),(\d+(?:\.\d+)?),(-?\d+)$")
 
 
 class Reader(threading.Thread):

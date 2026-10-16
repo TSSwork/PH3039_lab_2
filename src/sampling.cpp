@@ -7,13 +7,13 @@ constexpr uint32_t FS      = 20000;       // Hz
 constexpr uint32_t TICK_US = 1000000 / FS; // 50 us
 constexpr size_t   RING_N  = 8192;
 
-static volatile uint16_t ring[RING_N];
+static volatile int16_t ring[RING_N];
 static volatile uint32_t ring_head = 0;
 static volatile uint32_t ring_tail = 0;
 static volatile uint32_t overruns  = 0;
 static volatile bool     saadc_ok  = false;
 
-static uint16_t saadc_buf __attribute__((aligned(4)));
+static int16_t saadc_buf __attribute__((aligned(4)));
 
 static bool saadcInit(uint8_t ch) {
     NRF_SAADC->ENABLE     = 0;
@@ -63,7 +63,7 @@ extern "C" void TIMER3_IRQHandler(void) {
         // 3. Wait for conversion to finish
         while (!NRF_SAADC->EVENTS_END) {}     // Takes ~5us
 
-        uint16_t v = saadc_buf;
+        int16_t v = saadc_buf;
 
         uint32_t next = ring_head + 1;
         if (next - ring_tail >= RING_N) {
