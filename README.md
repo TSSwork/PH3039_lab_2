@@ -25,13 +25,13 @@ hears "off" it switches the LED off. It ignores silence and fan noise.
 src/main.cpp          Firmware 1: mic capture. Streams 2 s, 16 kHz PCM clips on request.
 src/edge_model.cpp    Firmware 2: runs the Edge Impulse classifier and drives the LED.
 src/sampling.cpp      Firmware 3: fixed-rate ADC capture for the Sampling/FFT lab.
-src/sampling_nano.cpp Firmware 3 for the Arduino Nano 33 BLE (mbed core, 10 kHz).
+src/sampling_nano.cpp Firmware 3b: same, for the Arduino Nano 33 BLE (mbed core, 10 kHz).
 src/fmt.h             csvln()/logln() serial helpers.
 scripts/ei_capture.py PC side of capture: asks the board for a clip and writes a .wav.
 scripts/sweep_log.py  Drives the signal generator through a frequency sweep and logs ADC samples.
 scripts/sweep_plot.py Plots sweep CSVs (live, one grid, or one PNG per frequency).
-scripts/log.sh        Logs serial output to data/log_<stamp>.{csv,log}.
-data/                 Sweep CSVs (sweep_<stamp>.csv) and plots from the sampling lab.
+scripts/log.sh        Logs serial output to data/log_<board>_<stamp>.{csv,log}.
+data/                 Sweep CSVs (sweep_<board>_<stamp>.csv) and plots from the sampling lab.
 edge_data/<label>/    Recorded training clips (on, off, noise_none, noise_fan).
 ei-tsswork-project-1-arduino-1.0.1-on-off.zip   Model v1 (ON/OFF only, superseded).
 ei-tsswork-project-1-arduino-1.0.2-on-off.zip   Model v2 (current, with noise classes).
@@ -77,7 +77,7 @@ your port is different, edit the file or add `PORT=...` to any make command.
 
 ## How the build picks a firmware
 
-`src/main.cpp`, `src/edge_model.cpp` and `src/sampling.cpp` each define `setup()`/`loop()`, so
+`src/main.cpp`, `src/edge_model.cpp` and `src/sampling*.cpp` each define `setup()`/`loop()`, so
 only one of them can go into a build. CMake copies the chosen file
 (`SKETCH_ENTRY`) and the headers in `src/*.h` into `build/<board>/sketch/sketch.ino`
 and compiles only that.
@@ -86,7 +86,7 @@ and compiles only that.
 |---------|----------|
 | `make build` / `make upload` / `make run` | `main.cpp` (capture) |
 | `make build_model` / `make upload_model` / `make run_model` | `edge_model.cpp` (inference) |
-| `make build_sampling` / `make upload_sampling` / `make sweep` | `sampling.cpp` (ADC sweep) |
+| `make build_sampling` / `make upload_sampling` / `make sweep` | `sampling.cpp` (ADC sweep; `SAMPLING_ENTRY` from `boards/<board>.env`, e.g. `sampling_nano.cpp`) |
 
 Other targets: `make monitor` (raw serial monitor), `make log`, `make clean`,
 `make help`.
@@ -144,7 +144,7 @@ make run_model CSV_HEADER=time_ms,label,score
 ```
 
 This builds `edge_model.cpp`, flashes it, and logs serial output to
-`data/log_<stamp>.csv`/`.log`. Stop with Ctrl+C. Use `make upload_model` followed
+`data/log_<board>_<stamp>.csv`/`.log`. Stop with Ctrl+C. Use `make upload_model` followed
 by `make monitor` if you only want to watch the output.
 
 > Pass `CSV_HEADER=time_ms,label,score` because `project.yaml` holds the capture
@@ -190,8 +190,8 @@ handout uses an RP2040. Here it runs on the **XIAO nRF52840** (SAADC), with a
 
 ### How it works
 
-1. **`src/sampling.cpp`** uses a hardware timer (TIMER3, 1 MHz ticks) to start
-   one 12-bit SAADC conversion every `1/FS` seconds, with `FS = 20000` Hz. The
+1. **`src/sampling.cpp`** (XIAO) uses a hardware timer (TIMER3, 1 MHz ticks) to start
+   one 12-bit SAADC conversion every `1/FS` seconds, with `FS = 20000` Hz. (`sampling_nano.cpp` does the same on the Nano 33 BLE at 10 kHz.) The
    conversion is single-ended on A0 with gain 1/6 and the internal reference,
    so the input range is about 0–3.6 V. The ISR does the conversion and
    nothing else. The samples are stored in RAM (up to `MAX_N = 50000`, int16),
@@ -224,11 +224,11 @@ make sweep SWEEP_ARGS="--fstep 1 --yes"   # 1 Hz steps, skip the safety prompt
 make sweepplot                    # live plot of the newest segment -> data/sweep_plot.png
 make sweepgrid                    # one PNG with a panel per frequency
 make sweepsplit                   # one PNG per frequency in data/plots/
-make sweepplot CSV=data/sweep_<stamp>.csv   # pick a file (default: newest)
+make sweepplot CSV=data/sweep_<board>_<stamp>.csv   # pick a file (default: newest)
 ```
 
-`SWEEP_FS` (default 20000) and `--fs` must match `FS` in `sampling.cpp`. Other
-options of `sweep_log.py`: `--fstart`, `--fstop`, `--fstep`, `--periods`,
+`SWEEP_FS` (default 20000, 10000 for the Nano) and `--fs` must match `FS` in the sampling firmware. Other
+options of `sweep_log.py`: `--board`, `--fstart`, `--fstop`, `--fstep`, `--periods`,
 `--settle`, `--vpp`, `--voff`, `--maxn`, `--outdir`.
 
 ### Using another board (Arduino Nano 33 BLE)
