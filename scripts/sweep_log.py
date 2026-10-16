@@ -9,8 +9,8 @@
 # ///
 """Automated 10 Hz -> 1 kHz frequency sweep.
 
-- Reader thread drains the XIAO serial stream continuously (never blocks USB).
 - Main thread conducts the SCPI sweep on the Keysight EDU33212A.
+- XIAO captures N samples into RAM at constant FS, then dumps them.
 - One merged CSV: freq_hz,time_ms,adc_v,gen_ref_v  (+ '#' metadata lines).
 """
 
@@ -18,60 +18,33 @@ import argparse
 import math
 import re
 import sys
-import threading
 import time
-from collections import deque
 from pathlib import Path
 
 import pyvisa
 import serial
 
+# Matches "idx,raw" where raw can be negative (e.g., -12)
 ROW_RE = re.compile(r"^(\d+),(-?\d+)$")
 
-class Reader(threading.Thread):
-    """Drains serial lines into a deque with PC-monotonic arrival stamps."""
 
-    def __init__(self, port, baud):
-        super().__init__(daemon=True)
-        self.ser = serial.Serial(port, baud, timeout=0.2)
-        self.rows = deque(maxlen=1_000_000)
-        self.lock = threading.Lock()
-        self.bad = 0
-        self.stop = False
-
-    def run(self):
-        while not self.stop:
-            try:
-                line = self.ser.readline().decode("utf-8", "replace").strip()
-            except (OSError, ValueError, serial.SerialException):
-                break
-            if not line:
-                continue
-            m = ROW_RE.match(line)
-            if m:
-                with self.lock:
-                    self.rows.append((
-                        time.monotonic(),
-                        int(m.group(1)),
-                        int(m.group(2)),
-                    ))
-            elif not line.startswith("#"):
-                self.bad += 1
-
-    def take_window(self, t0, t1):
-        """Return rows arriving in [t0, t1] and discard anything older."""
-        out = []
-        with self.lock:
-            while self.rows and self.rows[0][0] < t0:
-                self.rows.popleft()
-            for r in self.rows:
-                if r[0] <= t1:
-                    out.append(r)
-        return out
-
-    def close(self):
-        self.stop = True
-        self.ser.close()
+def capture(ser, n, fs):
+    """Ask the XIAO for n samples; return (rows, got_end). rows = [(idx, raw)]."""
+    ser.reset_input_buffer()
+    ser.write(f"C {n}\n".encode())
+    rows = []
+    # Timeout = capture time + transfer time + 5s slack
+    deadline = time.monotonic() + (n / fs) + (n * 12 / 150_000) + 5.0
+    while time.monotonic() < deadline:
+        line = ser.readline().decode("utf-8", "replace").strip()
+        if not line:
+            continue
+        if line.startswith("# END"):
+            return rows, True
+        m = ROW_RE.match(line)
+        if m:
+            rows.append((int(m.group(1)), int(m.group(2))))
+    return rows, False
 
 
 def open_generator():
@@ -112,6 +85,7 @@ def main():
     ap.add_argument("--settle", type=float, default=0.1)
     ap.add_argument("--vpp", type=float, default=3.0)
     ap.add_argument("--voff", type=float, default=1.5)
+    ap.add_argument("--maxn", type=int, default=50000, help="must be <= MAX_N in sampling.cpp")
     ap.add_argument("--outdir", default="data")
     ap.add_argument("--yes", action="store_true", help="skip the safety prompt")
     args = ap.parse_args()
@@ -126,9 +100,9 @@ def main():
             g.write("OUTP OFF")
             sys.exit("Aborted.")
 
-    reader = Reader(args.port, args.baud)
-    reader.start()
-    time.sleep(1.0)  # let the stream stabilise
+    ser = serial.Serial(args.port, args.baud, timeout=0.5)
+    time.sleep(1.0)
+    ser.reset_input_buffer()
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -149,7 +123,7 @@ def main():
                     f"vpp={args.vpp}, voff={args.voff}, phase_anchor=window_start\n")
             f.write(f"# fs={args.fs}, periods={args.periods}, margin={args.margin}, "
                     f"settle={args.settle}\n")
-            f.write(f"# started={stamp}, adc_v=raw*3.3/4095\n")
+            f.write(f"# started={stamp}, adc_v=raw*3.6/4095\n")
             f.write("freq_hz,time_ms,adc_v,gen_ref_v\n")
 
             step = 0
@@ -160,33 +134,30 @@ def main():
                 got = float(g.query("FREQ?"))          # confirm it landed
                 time.sleep(args.settle)
 
-                t_start = time.monotonic()
-                duration = args.periods * (1.0 + args.margin) / got
-                time.sleep(duration)
-                t_end = time.monotonic()
+                # Calculate how many samples we want for 30 periods + 20% margin
+                n_want = int(args.periods * args.fs / got)
+                n = min(n_want, args.maxn)
 
-                rows = reader.take_window(t_start, t_end)
+                rows, ok = capture(ser, n, args.fs)
 
                 if not rows:
                     print(f"[{step:3d}/{n_steps}] f={got:7.1f} Hz  NO ROWS - check firmware/port")
                 else:
-                    # rows is now a list of (pc_time, idx, raw)
-                    n0 = rows[0][1]
-                    # Count actual gaps in the global conversion index
-                    dropped = sum(1 for a, b in zip(rows, rows[1:]) if b[1] - a[1] != 1)
-
-                    for (_pc, n, raw) in rows:
-                        t_ms  = n * 1000.0 / args.fs
-                        t_sig = (n - n0) / float(args.fs)
-                        ref   = args.voff + (args.vpp / 2.0) * math.sin(2.0 * math.pi * got * t_sig)
-                        adc_v = raw * 3.6 / 4095.0   # v5 uses 3.6V full scale (gain 1/6)
+                    for (idx, raw) in rows:
+                        t_ms = idx * 1000.0 / args.fs
+                        # t_ms is in ms, so divide by 1000 for the sine wave calculation
+                        ref = args.voff + (args.vpp / 2.0) * math.sin(2.0 * math.pi * got * (t_ms / 1000.0))
+                        adc_v = raw * 3.6 / 4095.0
                         f.write(f"{got:.1f},{t_ms:.2f},{adc_v:.4f},{ref:.4f}\n")
                     f.flush()
 
-                    expect = duration * args.fs
-                    flag = "" if len(rows) > 0.5 * expect else "  <-- too few rows (FS mismatch?)"
+                    flag = ""
+                    if not ok:            flag += "  <-- no END (transfer cut off)"
+                    if len(rows) != n:    flag += "  <-- rows != requested"
+                    if n < n_want:        flag += f"  (capped: {n * got / args.fs:.1f} periods)"
+
                     print(f"[{step:3d}/{n_steps}] f={got:7.1f} Hz  rows={len(rows):6d} "
-                            f"(expect ~{expect:.0f})  dropped={dropped}{flag}")
+                          f"(asked {n}){flag}")
 
                 fr += args.fstep
 
@@ -195,7 +166,7 @@ def main():
         print(f"\nInterrupted by user. Partial CSV kept: {csv_path}")
     finally:
         g.write("OUTP OFF")       # safety: kill the output no matter what
-        reader.close()
+        ser.close()
         g.close()
 
 

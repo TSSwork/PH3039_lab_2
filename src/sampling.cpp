@@ -2,23 +2,17 @@
 #include <Adafruit_TinyUSB.h>
 #include "fmt.h"
 
-// v5: fast printer. ISR stamps every conversion with a global index;
-// loop() hand-formats "idx,raw\n" into a block buffer, one Serial.write
-// per burst. No doubles, no fmt in the hot path.
+// v6: capture-then-transfer. PC sends "C <N>\n"; we sample N points at FS
+// into RAM with no printing, then dump "idx,raw" rows and "# END".
 
-constexpr uint8_t  ADC_PIN = A0;            // XIAO D0/A0 = P0.02 = AIN0
-constexpr uint32_t FS      = 20000;         // Hz - keep in sync with --fs
+constexpr uint32_t FS      = 20000;          // Hz - keep in sync with --fs
 constexpr uint32_t TICK_US = 1000000 / FS;
-constexpr size_t   RING_N  = 8192;
+constexpr uint32_t MAX_N   = 50000;          // 100 KB of int16 (safe for 256KB RAM)
 
-static volatile int16_t  ring[RING_N];
-static volatile uint32_t ring_no[RING_N];   // global conversion index per slot
-static volatile uint32_t ring_head = 0;
-static volatile uint32_t ring_tail = 0;
-static volatile uint32_t overruns  = 0;
-static volatile uint32_t ticks     = 0;     // timer ISR entries
-static volatile uint32_t convs     = 0;     // successful conversions
-static volatile bool     saadc_ok  = false;
+static int16_t buf[MAX_N];
+static volatile uint32_t cap_n = 0, cap_i = 0, cap_bad = 0;
+static volatile bool capturing = false;
+static bool saadc_ok = false;
 
 static int16_t saadc_buf __attribute__((aligned(4)));
 
@@ -27,7 +21,6 @@ static bool saadcInit(uint8_t ch) {
     NRF_SAADC->RESOLUTION = SAADC_RESOLUTION_VAL_12bit;
     NRF_SAADC->OVERSAMPLE = SAADC_OVERSAMPLE_OVERSAMPLE_Bypass;
     NRF_SAADC->SAMPLERATE = SAADC_SAMPLERATE_MODE_Task;
-
     NRF_SAADC->CH[ch].PSELP = SAADC_CH_PSELP_PSELP_AnalogInput0 + ch;
     NRF_SAADC->CH[ch].PSELN = SAADC_CH_PSELN_PSELN_NC;
     NRF_SAADC->CH[ch].CONFIG =
@@ -38,13 +31,10 @@ static bool saadcInit(uint8_t ch) {
         (SAADC_CH_CONFIG_TACQ_3us        << SAADC_CH_CONFIG_TACQ_Pos)   |
         (SAADC_CH_CONFIG_MODE_SE         << SAADC_CH_CONFIG_MODE_Pos)   |
         (SAADC_CH_CONFIG_BURST_Disabled  << SAADC_CH_CONFIG_BURST_Pos);
-
     NRF_SAADC->INTENSET      = 0;
     NRF_SAADC->RESULT.PTR    = (uint32_t)&saadc_buf;
     NRF_SAADC->RESULT.MAXCNT = 1;
-
     NRF_SAADC->ENABLE = SAADC_ENABLE_ENABLE_Enabled;
-
     NRF_SAADC->EVENTS_CALIBRATEDONE = 0;
     NRF_SAADC->TASKS_CALIBRATEOFFSET = 1;
     for (uint32_t i = 0; i < 200000 && !NRF_SAADC->EVENTS_CALIBRATEDONE; i++) {}
@@ -55,39 +45,35 @@ extern "C" void TIMER3_IRQHandler(void) {
     if (!NRF_TIMER3->EVENTS_COMPARE[0]) return;
     NRF_TIMER3->EVENTS_COMPARE[0] = 0;
     NRF_TIMER3->CC[0] += TICK_US;
-    ticks++;
 
-    NRF_SAADC->EVENTS_STARTED = 0;
-    NRF_SAADC->TASKS_START = 1;                 // re-arm EasyDMA (v4 fix)
+    int16_t v = -32768;                          // marker if a conversion fails
     uint32_t w = 0;
+    NRF_SAADC->EVENTS_STARTED = 0;
+    NRF_SAADC->TASKS_START = 1;
     while (w++ < 640 && !NRF_SAADC->EVENTS_STARTED) {}
-    if (!NRF_SAADC->EVENTS_STARTED) return;
+    if (NRF_SAADC->EVENTS_STARTED) {
+        NRF_SAADC->EVENTS_END = 0;
+        NRF_SAADC->TASKS_SAMPLE = 1;
+        w = 0;
+        while (w++ < 640 && !NRF_SAADC->EVENTS_END) {}
+        if (NRF_SAADC->EVENTS_END) v = saadc_buf;
+    }
+    if (v == -32768) cap_bad++;
 
-    NRF_SAADC->EVENTS_END = 0;
-    NRF_SAADC->TASKS_SAMPLE = 1;
-    w = 0;
-    while (w++ < 640 && !NRF_SAADC->EVENTS_END) {}
-    if (!NRF_SAADC->EVENTS_END) return;
-
-    int16_t v = saadc_buf;
-    uint32_t n = convs;                         // global index of this conversion
-    convs++;
-
-    uint32_t next = ring_head + 1;
-    if (next - ring_tail >= RING_N) {
-        overruns++;                             // gap in n becomes visible downstream
-    } else {
-        ring[ring_head & (RING_N - 1)]   = v;
-        ring_no[ring_head & (RING_N - 1)] = n;
-        ring_head = next;
+    if (cap_i < cap_n) buf[cap_i++] = v;
+    if (cap_i >= cap_n) {                        // done: stop the timer
+        NRF_TIMER3->TASKS_STOP = 1;
+        capturing = false;
     }
 }
 
-static void startSampleTimer(void) {
+static void startCapture(uint32_t n) {
+    cap_n = n; cap_i = 0; cap_bad = 0; capturing = true;
     NRF_TIMER3->TASKS_SHUTDOWN = 1;
     NRF_TIMER3->MODE      = TIMER_MODE_MODE_Timer;
     NRF_TIMER3->BITMODE   = TIMER_BITMODE_BITMODE_32Bit;
-    NRF_TIMER3->PRESCALER = 4;                  // 1 MHz ticks
+    NRF_TIMER3->PRESCALER = 4;                   // 1 MHz ticks
+    NRF_TIMER3->TASKS_CLEAR = 1;
     NRF_TIMER3->CC[0]     = TICK_US;
     NRF_TIMER3->EVENTS_COMPARE[0] = 0;
     NRF_TIMER3->INTENSET  = TIMER_INTENSET_COMPARE0_Msk;
@@ -96,7 +82,6 @@ static void startSampleTimer(void) {
     NRF_TIMER3->TASKS_START = 1;
 }
 
-// ---- tiny integer formatters (no libc, no doubles) ----
 static char* put_u32(char* p, uint32_t v) {
     char tmp[10]; int n = 0;
     if (v == 0) { *p++ = '0'; return p; }
@@ -109,50 +94,45 @@ static char* put_i32(char* p, int32_t v) {
     return put_u32(p, (uint32_t)v);
 }
 
+static void dump(uint32_t n) {
+    logln("BEGIN n={} fs={} bad={}", n, FS, cap_bad);
+    static char out[512];
+    char* p = out;
+    for (uint32_t i = 0; i < n; i++) {
+        p = put_u32(p, i);
+        *p++ = ',';
+        p = put_i32(p, buf[i]);
+        *p++ = '\n';
+        if (p >= out + sizeof(out) - 24) {
+            Serial.write((const uint8_t*)out, p - out);
+            p = out;
+        }
+    }
+    if (p != out) Serial.write((const uint8_t*)out, p - out);
+    logln("END");
+    Serial.flush();
+}
+
 void setup() {
     Serial.begin(115200);
     unsigned long t0 = millis();
     while (!Serial && millis() - t0 < 3000) delay(10);
-
-    logln("idx,adc_raw");                       // header (PC computes time from idx)
-    logln("boot v5 fast printer, FS={} Hz", FS);
     saadc_ok = saadcInit(0);
-    logln("SAADC init: {}", saadc_ok ? 1 : 0);
-    if (saadc_ok) startSampleTimer();
+    logln("boot v6 capture mode, FS={} Hz, MAX_N={}, saadc_ok={}", FS, MAX_N, saadc_ok ? 1 : 0);
 }
 
 void loop() {
-    static uint32_t lastHb = 0, lastTicks = 0, lastConvs = 0, lastPrinted = 0;
-    static uint32_t printed = 0;
+    if (!Serial.available()) return;
+    String line = Serial.readStringUntil('\n');
+    line.trim();
+    if (line.length() < 3 || line[0] != 'C') return;
 
-    if (millis() - lastHb > 2000) {
-        logln("hb dt={}ms ticks+={} convs+={} printed+={} overruns={}",
-              millis() - lastHb, ticks - lastTicks, convs - lastConvs,
-              printed - lastPrinted, overruns);
-        lastHb = millis(); lastTicks = ticks; lastConvs = convs; lastPrinted = printed;
-    }
-    if (!saadc_ok) { delay(100); return; }
+    uint32_t n = (uint32_t)line.substring(1).toInt();
+    if (n == 0) return;
+    if (n > MAX_N) n = MAX_N;
+    if (!saadc_ok) { logln("ERR saadc"); return; }
 
-    static char buf[512];
-    char* p = buf;
-    char* limit = buf + sizeof(buf) - 24;
-
-    while (ring_tail != ring_head) {
-        uint32_t h = ring_tail;
-        int16_t  raw = ring[h & (RING_N - 1)];
-        uint32_t n   = ring_no[h & (RING_N - 1)];
-        ring_tail = h + 1;
-
-        p = put_u32(p, n);
-        *p++ = ',';
-        p = put_i32(p, raw);
-        *p++ = '\n';
-        printed++;
-
-        if (p >= limit) {
-            Serial.write((const uint8_t*)buf, p - buf);
-            p = buf;
-        }
-    }
-    if (p != buf) Serial.write((const uint8_t*)buf, p - buf);
+    startCapture(n);
+    while (capturing) {}                          // wait for capture to finish (~n/FS seconds)
+    dump(n);
 }
