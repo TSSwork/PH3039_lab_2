@@ -1,6 +1,6 @@
 /build/
-/data/*
-!/data/.gitkeep
+# /data/*
+# !/data/.gitkeep
 
 .clangd
 compile_commands.json
