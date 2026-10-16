@@ -42,7 +42,10 @@ class Reader(threading.Thread):
 
     def run(self):
         while not self.stop:
-            line = self.ser.readline().decode("utf-8", "replace").strip()
+            try:
+                line = self.ser.readline().decode("utf-8", "replace").strip()
+            except (OSError, ValueError, serial.SerialException):
+                break
             if not line:
                 continue
             m = ROW_RE.match(line)
@@ -174,7 +177,7 @@ def main():
                     for (_pc, _idx, t_ms, raw) in rows:
                         t_sig = (t_ms - t_ms0) / 1000.0
                         ref = args.voff + (args.vpp / 2.0) * math.sin(2.0 * math.pi * got * t_sig)
-                        adc_v = raw * 3.3 / 4095.0
+                        adc_v = raw * 3.6 / 4095.0
                         f.write(f"{got:.1f},{t_ms:.2f},{adc_v:.4f},{ref:.4f}\n")
                     f.flush()
                     expect = duration * args.fs
