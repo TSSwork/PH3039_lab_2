@@ -26,8 +26,7 @@ from pathlib import Path
 import pyvisa
 import serial
 
-ROW_RE = re.compile(r"^(\d+),(\d+(?:\.\d+)?),(-?\d+)$")
-
+ROW_RE = re.compile(r"^(\d+),(-?\d+)$")
 
 class Reader(threading.Thread):
     """Drains serial lines into a deque with PC-monotonic arrival stamps."""
@@ -54,8 +53,7 @@ class Reader(threading.Thread):
                     self.rows.append((
                         time.monotonic(),
                         int(m.group(1)),
-                        float(m.group(2)),
-                        int(m.group(3)),
+                        int(m.group(2)),
                     ))
             elif not line.startswith("#"):
                 self.bad += 1
@@ -168,22 +166,27 @@ def main():
                 t_end = time.monotonic()
 
                 rows = reader.take_window(t_start, t_end)
-                dropped = sum(1 for a, b in zip(rows, rows[1:]) if b[1] - a[1] != 1)
 
                 if not rows:
                     print(f"[{step:3d}/{n_steps}] f={got:7.1f} Hz  NO ROWS - check firmware/port")
                 else:
-                    t_ms0 = rows[0][2]
-                    for (_pc, _idx, t_ms, raw) in rows:
-                        t_sig = (t_ms - t_ms0) / 1000.0
-                        ref = args.voff + (args.vpp / 2.0) * math.sin(2.0 * math.pi * got * t_sig)
-                        adc_v = raw * 3.6 / 4095.0
+                    # rows is now a list of (pc_time, idx, raw)
+                    n0 = rows[0][1]
+                    # Count actual gaps in the global conversion index
+                    dropped = sum(1 for a, b in zip(rows, rows[1:]) if b[1] - a[1] != 1)
+
+                    for (_pc, n, raw) in rows:
+                        t_ms  = n * 1000.0 / args.fs
+                        t_sig = (n - n0) / float(args.fs)
+                        ref   = args.voff + (args.vpp / 2.0) * math.sin(2.0 * math.pi * got * t_sig)
+                        adc_v = raw * 3.6 / 4095.0   # v5 uses 3.6V full scale (gain 1/6)
                         f.write(f"{got:.1f},{t_ms:.2f},{adc_v:.4f},{ref:.4f}\n")
                     f.flush()
+
                     expect = duration * args.fs
                     flag = "" if len(rows) > 0.5 * expect else "  <-- too few rows (FS mismatch?)"
                     print(f"[{step:3d}/{n_steps}] f={got:7.1f} Hz  rows={len(rows):6d} "
-                          f"(expect ~{expect:.0f})  dropped={dropped}{flag}")
+                            f"(expect ~{expect:.0f})  dropped={dropped}{flag}")
 
                 fr += args.fstep
 
