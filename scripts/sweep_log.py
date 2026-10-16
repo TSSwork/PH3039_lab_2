@@ -23,8 +23,8 @@ import time
 from collections import deque
 from pathlib import Path
 
-import serial
 import pyvisa
+import serial
 
 ROW_RE = re.compile(r"^(\d+),(\d+(?:\.\d+)?),(\d+)$")
 
@@ -185,6 +185,8 @@ def main():
                 fr += args.fstep
 
         print(f"\nDone. CSV: {csv_path}")
+    except KeyboardInterrupt:
+        print(f"\nInterrupted by user. Partial CSV kept: {csv_path}")
     finally:
         g.write("OUTP OFF")       # safety: kill the output no matter what
         reader.close()
