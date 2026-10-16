@@ -150,3 +150,9 @@ sweep: upload_sampling
 
 sweepplot:
 	uv run scripts/sweep_plot.py $(if $(CSV),--file $(CSV),)
+
+sweepgrid:
+	uv run scripts/sweep_plot.py --grid $(if $(CSV),--file $(CSV),)
+
+sweepsplit:
+	uv run scripts/sweep_plot.py --split $(if $(CSV),--file $(CSV),)
