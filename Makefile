@@ -30,6 +30,9 @@ COUNT ?= 1
 WAV_DIR ?= edge_data
 UV ?= uv
 
+SWEEP_FS   ?= 20000
+SWEEP_ARGS ?=
+
 BUILD := build/$(BOARD)
 NINJA := ninja -C $(BUILD)
 
@@ -127,3 +130,23 @@ run_model: upload_model
 	@echo "Starting serial logging for Edge Impulse model..."
 	@sleep 2
 	$(MAKE) log
+
+
+
+.PHONY: help configure build upload monitor log run clangd clean \
+        build_model upload_model run_model \
+        build_sampling upload_sampling sweep sweepplot
+
+# --- Sampling & frequency sweep (Sampling/FFT lab) ----------------------
+build_sampling:
+	$(MAKE) configure SKETCH_ENTRY=sampling.cpp
+	$(NINJA) build
+
+upload_sampling: build_sampling
+	PORT="$(PORT)" $(NINJA) upload
+
+sweep: upload_sampling
+	uv run scripts/sweep_log.py --port "$(PORT)" --fs $(SWEEP_FS) $(SWEEP_ARGS)
+
+sweepplot:
+	uv run scripts/sweep_plot.py $(if $(CSV),--file $(CSV),)
